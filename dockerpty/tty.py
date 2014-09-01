@@ -36,14 +36,21 @@ def size(fd):
         return None
 
     try:
-        dims = struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ, 'hhhh'))
+        return struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ, 'hhhh'))
     except:
-        try:
-            dims = (os.environ['LINES'], os.environ['COLUMNS'])
-        except:
-            return None
+        pass
 
-    return dims
+    try:
+       return os.popen('stty size', 'r').read().split()
+    except:
+        pass
+
+    try:
+        return os.environ['LINES'], os.environ['COLUMNS']
+    except:
+        pass
+
+    return None
 
 
 class Terminal(object):
