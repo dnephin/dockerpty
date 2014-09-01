@@ -14,11 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import namedtuple
 import sys
 import signal
 
 import dockerpty.io as io
 import dockerpty.tty as tty
+
+
+class FDSet(namedtuple('_FDSet', 'stdin stdout stderr')):
+    """A complete set of file descriptors used by a pts."""
+
+    @property
+    def outs(self):
+        return [self.stdout, self.stderr]
 
 
 class WINCHHandler(object):
@@ -134,7 +143,7 @@ class PseudoTerminal(object):
             (pty_stderr, io.Stream(sys.stderr)),
         ]
 
-        pumps = [io.Pump(a, b) for (a, b) in mappings if a and b]
+        pumps = FDSet(*[io.Pump(a, b) for (a, b) in mappings])
 
         if not self.container_info()['State']['Running']:
             self.client.start(self.container, **kwargs)
@@ -216,14 +225,24 @@ class PseudoTerminal(object):
         """
         Thin wrapper around client.inspect_container().
         """
-
         return self.client.inspect_container(self.container)
 
 
-    def _hijack_tty(self, pumps):
+    def _hijack_tty(self, fd_set):
         with tty.Terminal(sys.stdin, raw=self.israw()):
             self.resize()
-            while True:
-                ready = io.select(pumps, timeout=1)
-                if not all([p.flush() is not None for p in ready]):
-                    break
+            self.pump_fds(fd_set)
+           
+    def pump_fds(self, fd_set):
+        """The stdout or stderr socket may be read first, but we should
+        wait for both sockets to be empty before exiting. Exit immediately
+        if we get an EOF on stdin, but always flush stdout/stderr first.
+        """
+
+        while True:
+            ready = io.select(fd_set, timeout=10)
+            if all(fd_is_done(fd) for fd in ready):
+                return
+
+def fd_is_done(fd):
+    return fd and fd.flush() is None
